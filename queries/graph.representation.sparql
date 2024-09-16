@@ -31,6 +31,14 @@ SELECT DISTINCT
 ?schema_transcript
 ?created_at
 ?updated_at
+FROM <https://data.hetarchief.be/graph/thesaurus/thesauri>
+FROM <https://data.hetarchief.be/graph/thesaurus/licenses>
+FROM <https://data.hetarchief.be/graph/organization>
+FROM <https://data.hetarchief.be/graph/thesaurus/namenlijst>
+FROM <https://data.hetarchief.be/graph/metadata/OR-0z70w1b>
+FROM <https://data.hetarchief.be/graph/metadata/OR-zc7rt4f>
+FROM <https://data.hetarchief.be/graph/metadata/OR-v97zq9j>
+FROM <https://data.hetarchief.be/graph/metadata/OR-gh9b857>
 WHERE {
 
     { 
