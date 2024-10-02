@@ -58,7 +58,7 @@ WHERE {
     }
 
     FILTER (
-      (?ebucore_has_mime_type IN ( "application/json", "video/mp4", "audio/mp4", "image/jpeg", "application/xml", "audio/mpeg", "audio/m4a", "image/jph" ))
+      (?ebucore_has_mime_type IN ( "application/json", "video/mp4", "audio/mp4", "image/jpeg", "application/xml", "audio/mpeg", "audio/m4a", "image/jp2" ))
     )
 
     ?file_id prov:wasDerivedFrom/schema:dateModified ?modified .
