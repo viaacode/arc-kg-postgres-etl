@@ -16,9 +16,10 @@ import {
     SKIP_SQUASH,
     TABLE_PRED,
     SKIP_VIEW,
-    SKIP_CLEANUP
+    SKIP_CLEANUP,
+    RECORD_OFFSET
 } from './configuration.js'
-import { logInfo, logError, logDebug, getErrorMessage, msToTime, logWarning } from './util.js'
+import { logInfo, logError, logDebug, msToTime, logWarning, stats, getProgress } from './util.js'
 import './debug.js'
 import { DepGraph } from 'dependency-graph'
 import { TableNode, TableInfo, Destination, GraphInfo } from './types.js'
@@ -26,14 +27,6 @@ import { closeConnectionPool, createTempTable, getTableColumns, getDependentTabl
 import { performance } from 'perf_hooks'
 
 const tableIndex = new DepGraph<TableNode>()
-
-export const stats = {
-    recordCount: 0,
-    tripleCount: 0,
-    batchCount:0,
-    unprocessedBatches: 0,
-    numberOfStatements: 0
-}
 
 async function addQuery(account: Account, queryName: string, params: AddQueryOptions) {
     try {
@@ -126,7 +119,7 @@ async function processRecord(
 }
 
 // Main function to parse and process the gzipped TriG file from a URL
-async function processGraph(graph: Graph) {
+async function processGraph(graph: Graph, recordOffset: number = 0, recordLimit?: number | null) {
     // Retrieve total number of triples
     const { numberOfStatements } = await graph.getInfo()
     logInfo(`Start processing graph of ${numberOfStatements} statements.`)
@@ -161,7 +154,7 @@ async function processGraph(graph: Graph) {
                 // If the subject changes, create a new record
                 if (subject !== currentSubject) {
                     // Process the current record if there is one
-                    if (currentSubject !== null && Object.keys(currentRecord).length > 0 && currentTableName !== null) {
+                    if (currentSubject !== null && Object.keys(currentRecord).length > 0 && currentTableName !== null && recordOffset <= stats.recordCount) {
                         try {
                             // Pause the stream so it does not prevent async processRecord function from executing
                             quadStream.pause()
@@ -174,20 +167,23 @@ async function processGraph(graph: Graph) {
                                 // empty table batch when it's processed
                                 batches[currentTableName] = []
                             }
-                        } finally {
+                        } catch (err) {
+                            logError('Error while processing record or batch', err)
+                        }
+                        finally {
                             // Resume the stream after the async function is done, also when failed.
                             quadStream.resume()
                         }
                     }
 
                     // If a set record limit is reached, stop the RDF stream
-                    if (RECORD_LIMIT && stats.recordCount > RECORD_LIMIT) {
+                    if (recordLimit && stats.recordCount > recordLimit) {
                         return quadStream.destroy()
                     }
 
                     // Increment the number of processed records
                     stats.recordCount++
-                    
+
 
                     currentSubject = subject
                     currentTableName = null
@@ -212,9 +208,9 @@ async function processGraph(graph: Graph) {
                 }
                 stats.tripleCount++
 
-                const progress = (stats.tripleCount / numberOfStatements) * 100
+                const progress = getProgress()
                 if (progress % 10 === 0) {
-                    logInfo(`Processed ${stats.recordCount} records (${stats.tripleCount} of ${numberOfStatements} statements; ${Math.round(progress)}% of graph).`)
+                    logInfo(`Processed ${stats.recordCount} records (record offset: ${recordOffset}; ${stats.tripleCount} of ${numberOfStatements} statements; ${Math.round(progress)}% of graph).`)
                 }
             })
             // When the stream has ended
@@ -236,7 +232,7 @@ async function processGraph(graph: Graph) {
                 resolve()
             })
             .on('error', (err: Error) => {
-                logError('Error during parsing or processing:', err, stats)
+                logError('Error during parsing or processing:', err)
                 reject(err)
             })
     })
@@ -346,7 +342,7 @@ async function main() {
     // Get destination graph and process
     const graph = await destination.dataset.getGraph(destination.graph)
 
-    await processGraph(graph)
+    await processGraph(graph, RECORD_OFFSET, RECORD_LIMIT)
     logInfo(`Loading completed (${msToTime(performance.now() - start)}).`)
 
     logInfo('--- Step 3: upsert tables --')
@@ -397,8 +393,7 @@ async function main() {
 }
 
 main().catch(async err => {
-    const msg = getErrorMessage(err)
-    logError(msg, err, stats)
+    logError('Error in main function', err)
     if (!SKIP_CLEANUP) {
         logInfo('--- Graph and table cleanup because of error --')
         await cleanup()
@@ -407,27 +402,27 @@ main().catch(async err => {
     }
     process.exit(1)
 }).finally(async () => {
-    logDebug(`Unprocessed batches: ${stats.unprocessedBatches}`)
+    logDebug('Closing connection pool')
     await closeConnectionPool()
 })
 
 // Disaster handling
 process.on('SIGTERM', signal => {
-    logWarning(`Process ${process.pid} received a SIGTERM signal`, signal, stats)
+    logWarning(`Process ${process.pid} received a SIGTERM signal`, signal)
     process.exit(1)
 })
 
 process.on('SIGINT', signal => {
-    logWarning(`Process ${process.pid} has been interrupted`, signal, stats)
+    logWarning(`Process ${process.pid} has been interrupted`, signal)
     process.exit(1)
 })
 
 process.on('uncaughtException', err => {
-    logError(`Uncaught Exception: ${err.message}`, err.stack, stats)
+    logError('Uncaught Exception', err, err.stack)
     process.exit(1)
 })
 
 process.on('unhandledRejection', (reason, promise) => {
-    logError(`Unhandled rejection at ${promise}`, reason, stats)
+    logError(`Unhandled rejection at ${promise}`, reason)
     process.exit(1)
 })
